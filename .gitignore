@@ -131,3 +131,6 @@ dist
 
 # temp files
 audio_stream_1.wav
+
+# python
+__pycache__
