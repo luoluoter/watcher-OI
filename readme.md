@@ -107,7 +107,7 @@ To make the Watcher hardware device send messages to the aforementioned services
 
 Once everything is configured, test the setup by issuing English commands to the hardware device and observing the computer's response. Demonstration is as follows:
 
-![](./test.mp4)
+![](./test.gif)
 
 **Troubleshooting List:**
 
