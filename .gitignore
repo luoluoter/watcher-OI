@@ -134,3 +134,10 @@ audio_stream_1.wav
 
 # python
 __pycache__
+
+# macOS
+.DS_Store
+
+# watcher runtime/debug outputs
+debug-responses/
+debug-audio-profiles/

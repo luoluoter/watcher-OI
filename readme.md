@@ -1,119 +1,103 @@
-# Watcher-OI
+# OpenClaw Watcher Bridge
 
-## Overview
+`watcher-OI` is now a single-purpose bridge service:
 
-This guide will walk you through setting up a service that enables hardware devices to interpret English commands and perform corresponding actions on a computer. This process includes installing Ollama, Docker, third-party open-source image services, and starting Node.js and Python scripts.
+- Receives device audio at `POST /v2/watcher/talk/audio_stream`
+- Forwards raw audio to upstream Watcher API
+- Repackages upstream result to device format: `JSON + boundary + WAV`
 
-## Prerequisites
+Legacy STT/OI/Ollama/Python local pipeline has been removed from this repository.
 
-Before you begin, ensure you have the following:
+## API Contract
 
-1. Compatible hardware capable of running Ollama.
-2. A computer with Docker, Python, and Node.js installed.
-3. Familiarity with basic command-line operations.
-4. A Watcher device. [What is a Watcher?](https://www.seeedstudio.com/watcher) (Not an advertisement!)
+- Device request: `POST /v2/watcher/talk/audio_stream`
+- Request body: raw audio bytes (existing device behavior unchanged)
+- Device response: `application/octet-stream`
+  - Part 1: JSON payload
+  - Part 2: WAV bytes separated by `---sensecraftboundary---`
 
-## Step 1: Install Ollama
+## Quick Start
 
-Ollama is a key component that enables your hardware device to process commands. Follow these steps to install Ollama:
+1. Install dependencies.
 
-- Download the latest version of Ollama from the [official website](https://ollama.com/download).
-- Install Ollama by following the on-screen instructions.
-- Verify the installation by running `ollama --version` in the terminal.
-- Install a local model by running the command `ollama run llama3.1`.
+```bash
+npm install
+```
 
-**Troubleshooting List:**
+2. Create env file.
 
-- Is the Ollama software compatible with your hardware device?
-- Did you download the correct version for your operating system?
-- Did you install a local model to provide for subsequent processes?
-- Can you run the local model without issues?
+```bash
+cp .env.example .env
+```
 
-## Step 2: Install Docker
+3. Start service.
 
-Docker will be used to containerize third-party open-source image services. Follow these steps to install Docker:
+```bash
+npm run start
+```
 
-- Visit the [Docker website](https://www.docker.com/products/docker-desktop).
-- Download Docker Desktop/Docker Engine for your operating system.
-- Install Docker and follow the setup instructions.
-- Start Docker Desktop and ensure it is running.
+Default listen port is `8000`.
 
-**Troubleshooting List:**
+## Environment Variables
 
-- Does your computer meet Docker's system requirements?
-- Have you successfully added your user to the Docker group?
-- Can you start a hello world container without issues?
+Required for normal bridge use:
 
-## Step 3: Install STT Service
+- `WATCHER_TARGET`: upstream base URL, for example `http://172.22.1.82:18789`
+- `WATCHER_AUTH_TOKEN`: auth token used when this bridge calls upstream
 
-You will need an STT (Speech-to-Text) service to handle voice commands. A popular choice is the [OpenAI Whisper ASR Webservice API](https://github.com/ahmetoner/whisper-asr-webservice).
+Optional:
 
-Install it using the following command:
+- `WATCHER_INBOUND_AUTH_TOKEN`: inbound auth token for device requests
+- `WATCHER_SENDER`: fallback `sender` query value (default `test-device`)
+- `WATCHER_UPSTREAM_TIMEOUT_MS`: upstream timeout in ms (default `60000`)
+- `WATCHER_MAX_REQUEST_BYTES`: max inbound body size (default `20971520`)
+- `WATCHER_DEBUG_DIR`: debug output directory (default `debug-responses`)
+- `WATCHER_SAVE_REQ`: save inbound request binary (`1/0`)
+- `WATCHER_SAVE_UPSTREAM`: save upstream raw response (`1/0`)
+- `WATCHER_SAVE_RESP`: save final device response (`1/0`)
+- `WATCHER_SAVE_AUDIO`: save extracted/final wav (`1/0`)
+- `WATCHER_ENV_FILE`: load a non-default env file path
 
-- `docker run -d --gpus all -p 9000:9000 -e ASR_MODEL=base -e ASR_ENGINE=openai_whisper onerahmet/openai-whisper-asr-webservice:latest-gpu`
+## Authorization
 
-**Troubleshooting List:**
+Inbound auth:
 
-- Does your computer support running this container?
-- If your computer does not have a GPU, switch to `latest-cpu`, will it run smoothly?
+- If `WATCHER_INBOUND_AUTH_TOKEN` is empty, inbound auth is disabled.
+- If configured, request header `Authorization` must match it.
+- Mismatch returns `401`.
 
-## Step 4: Start Node.js Script
+Upstream auth:
 
-Node.js will handle communication between the hardware device and the computer. To start the Node.js script:
+- Bridge always forwards `Authorization` using `WATCHER_AUTH_TOKEN` (supports raw token or `Bearer ...`).
 
-- Ensure that Node.js is installed on your system.
-- Navigate to the directory of this repository.
-- Run `npm install` in the terminal to install software dependencies.
-- Run `npm run start` in the terminal.
+## Upstream Integration
 
-**Troubleshooting List:**
+Current upstream contract expected by bridge:
 
-- Is your Node.js correctly installed?
-- Are there any missing dependencies required for the script to run?
-- Does the script require the use of port 8000, and is there a conflict?
+- Request stays as raw audio bytes.
+- Upstream can return either:
+  - New JSON contract (`data.reply_text`, `data.reply_wav_base64`), or
+  - Existing boundary binary format.
+- Bridge normalizes both into device-required `JSON + boundary + WAV`.
 
-## Step 5: Start Python Script
+## Debug Outputs
 
-The Python script will process English commands and trigger actions on the computer. Start it by:
+When enabled, files are written under `debug-responses/`:
 
-- Ensuring that Python is installed on your system.
-- Install [Open Interpreter](https://docs.openinterpreter.com/getting-started/introduction), which is used to handle voice commands issued by humans.
-- Navigate to the root directory of this repository.
-- Run `pip install -r requirements.txt` in the terminal to install environment dependencies.
-- Run `python proxy.py` in the terminal.
+- `request_*.bin`
+- `upstream_*.bin`
+- `response_*.bin`
+- `audio_*.wav`
 
-**Troubleshooting List:**
+These files are ignored by git.
 
-- Is the Python interpreter installed and accessible from your terminal?
-- Are there any required libraries missing for the script to run?
-- Are the script's runtime logs printing normally?
-- Does the script require the use of port 9888, and is there a conflict?
+## Removed Legacy
 
-## Step 6: Configure Hardware Device
+The following legacy files and runtime path were removed intentionally:
 
-To make the Watcher hardware device send messages to the aforementioned services:
+- `common.js`
+- `common.py`
+- `proxy.py`
+- `requirements.txt`
 
-- Ensure that the Watcher is powered on.
-- Download the App on your mobile phone. Search for `SenseCraft` in the app market.
-- Follow the app's instructions to configure the device to connect to the internet.
-- Then configure the Watcher AI Service of the device to Private, with the value set to `http://internal-network-address:8000`.
-
-**Troubleshooting List:**
-
-- Is the hardware device correctly connected and powered?
-- Does the device have the necessary firmware to communicate with the computer?
-
-## Step 7: Test the Setup
-
-Once everything is configured, test the setup by issuing English commands to the hardware device and observing the computer's response. Demonstration is as follows:
-
-![](./test.gif)
-
-**Troubleshooting List:**
-
-- Does the hardware device correctly interpret the commands?
-- Can the computer execute the corresponding actions?
-
-## Conclusion
-
-Following these steps should result in a functional service that allows hardware devices to interpret English commands and trigger actions on a computer. If you encounter any issues, refer to the documentation of each component or seek help from the respective community forums.
+This repository no longer provides backward-compatible legacy startup steps.
