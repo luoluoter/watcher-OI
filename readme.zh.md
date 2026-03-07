@@ -1,54 +1,49 @@
 # 给 OpenClaw 的龙虾装上耳朵和嘴巴
 
-这个项目做的事情很直接：
+这个项目是一个语音桥接入口：
 
-- 用 Seeed Watcher 当“麦克风 + 播放器”
+- 用 Watcher 收音和播报
 - 把语音请求送进 OpenClaw
-- 再把 OpenClaw 的回复变回 Watcher 能直接播放的格式
+- 把 OpenClaw 返回的结果转成 Watcher 能直接播放的格式
 
-一句话：这是一个语音入口桥接器。  
-它让你的 OpenClaw（龙虾）先“听得见、说得出”。  
-至于“看得见”（摄像头视觉能力），可以在下一步继续加，因为 Watcher 本身有摄像头。
+一句话：先让龙虾“听得见、说得出”。  
+“看得见”这件事可以下一步做，因为 Watcher 本身有摄像头。
 
-## 你最终会看到什么效果
+## 最小可运行路径
 
-打通之后，日常体验是：
+`Watcher -> watcher-OI -> OpenClaw(watcher) -> watcher-OI -> Watcher`
 
-1. 你对着 Watcher 说话
-2. Watcher 把音频发给这个桥接服务
-3. 桥接服务转给 OpenClaw（watcher 通道）
-4. OpenClaw 生成回复文本 + 语音
-5. Watcher 播放声音，同时显示文字
+## 打通后是什么体验
 
-也就是一个完整闭环：`说话 -> 理解 -> 回答 -> 播放`。
+1. 你对 Watcher 说话
+2. Watcher 上传音频到桥接服务
+3. OpenClaw 生成回复
+4. Watcher 播放语音并显示文本
 
-## 系统关系（很重要）
+完整闭环：`说话 -> 理解 -> 回答 -> 播放`
 
-```text
-Watcher 硬件
-  -> watcher-OI（本项目，桥接层）
-  -> OpenClaw（extensions/watcher）
-  -> watcher-OI
-  -> Watcher 播放回复
-```
+## 硬件准备（Watcher）
 
-## 先准备硬件（Watcher）
-
-官方快速入门：
+官方入门文档：
 
 - https://wiki.seeedstudio.com/getting_started_with_watcher/
 
-你只需要确保三件事：
+你需要确认：
 
-1. Watcher 能联网
-2. Watcher 能访问桥接服务地址（例如 `http://192.168.1.20:8000`）
-3. 在 SenseCraft 里把私有 AI 服务地址指向这个桥接地址
+1. Watcher 已联网
+2. Watcher 能访问桥接地址（例如 `http://192.168.1.20:8000`）
+3. SenseCraft 私有 AI 地址配置为桥接地址
 
-## 再准备软件（OpenClaw + 桥接）
+避坑：
 
-## A. OpenClaw 侧（上游）
+- 私有 AI 地址应填 `watcher-OI` 地址，不是 OpenClaw 地址
+- 桥接地址尽量用固定内网 IP，不用临时热点 IP
 
-确保 OpenClaw 开了 watcher 通道，核心配置类似：
+## 软件准备（OpenClaw + watcher-OI）
+
+### A. OpenClaw 侧
+
+确保 watcher 通道启用：
 
 ```yaml
 channels:
@@ -59,60 +54,97 @@ channels:
     bigmodelApiKey: <your-bigmodel-key>
 ```
 
-## B. watcher-OI 侧（本项目）
+通过标准：
+
+- OpenClaw 启动日志里能看到 watcher webhook 已注册
+
+### B. watcher-OI 侧
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-最小 `.env`（只改这两个就能跑起来）：
+最小 `.env`：
 
 ```dotenv
 WATCHER_TARGET=http://<openclaw-host>:<gateway-port>
 WATCHER_AUTH_TOKEN=<shared-token>
 ```
 
-然后启动：
+启动：
 
 ```bash
 npm run start
 ```
 
-默认监听端口是 `8000`。
+通过标准：
+
+- 启动日志出现 `Server running on port 8000`
+
+避坑：
+
+- `WATCHER_AUTH_TOKEN` 要和 OpenClaw 的 `webhookToken` 一致
 
 ## 5 分钟打通检查
 
-1. 确认桥接服务已启动（访问 `/` 返回 404 也正常，说明进程活着）：
+1. 检查桥接进程存活（`/` 返回 404 也算正常）：
 
 ```bash
 curl -i http://127.0.0.1:8000/
 ```
 
-2. 确认桥接机能访问 OpenClaw：
+通过标准：
+
+- 返回状态不是连接失败（404 可以）
+
+2. 检查桥接到 OpenClaw 连通性：
 
 ```bash
 curl -i http://<openclaw-host>:<gateway-port>/health
 ```
 
-3. 让 Watcher 发起一次真实语音请求，观察桥接日志是否有请求和上游返回。
+通过标准：
 
-## 为什么要加这一层桥接
+- 返回 200（或你环境里的健康状态码）
 
-OpenClaw 的 watcher 通道返回的是清晰的 JSON（文本 + 音频 base64）。  
-Watcher 设备侧更适合消费二进制拼包（JSON + boundary + WAV）。  
-这个项目就是把两边“协议翻译”接起来，减少你在设备端和 OpenClaw 端的改动成本。
+3. 用 Watcher 发一条真实语音
 
-## 现在有了什么，还差什么
+通过标准：
 
-- 已有：耳朵（收音）+ 嘴巴（播报）
-- 下一步：眼睛（摄像头视觉链路）
+- 桥接日志里能看到 `upstream status=...`
+- 设备端听到语音回复，并看到文字
 
-Watcher 已经有摄像头硬件基础，所以后续可以在这个入口之上继续扩展视觉能力。
+## 日志样例（成功）
 
-## 常见问题（简版）
+```text
+[k9a2nd] -> POST /v2/watcher/talk/audio_stream
+[k9a2nd] -> upstream http://openclaw:3000/v2/watcher/talk/audio_stream
+[k9a2nd] upstream status=200 bytes=48236
+[k9a2nd] <- 200 POST /v2/watcher/talk/audio_stream duration=1520ms
+```
 
-- `401`：通常是 token 不一致（桥接和 OpenClaw 的共享 token 没对齐）
-- `502`：通常是桥接访问不到 OpenClaw
-- 有文字没声音：检查 OpenClaw TTS 配置和桥接日志
+## 为什么需要这层桥接
 
+OpenClaw watcher 返回 JSON（文本 + base64 音频），  
+Watcher 设备更适合消费二进制拼包（JSON + boundary + WAV）。  
+这个项目把两边协议对齐，减少改造成本。
+
+## 兼容范围（当前文档）
+
+当前 README 适配的上游契约是 OpenClaw `extensions/watcher` 返回：
+
+- `data.reply_text`
+- `data.reply_wav_base64`
+- `data.stt_result`（可选）
+
+## 现在有了什么，后面做什么
+
+- 现在：耳朵 + 嘴巴（语音入口）
+- 后续：眼睛（摄像头视觉链路）
+
+## 常见问题
+
+- `401`：共享 token 不一致
+- `502`：桥接访问不到 OpenClaw
+- 有字没声：优先检查 OpenClaw TTS 配置和桥接日志
