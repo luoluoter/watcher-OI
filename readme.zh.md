@@ -1,40 +1,54 @@
-# OpenClaw Watcher Bridge
+# 给 OpenClaw 的龙虾装上耳朵和嘴巴
 
-这个仓库现在只做一件事：
+这个项目做的事情很直接：
 
-- 接设备音频：`POST /v2/watcher/talk/audio_stream`
-- 把原始音频转发给上游 Watcher 服务
-- 回设备标准包：`JSON + ---sensecraftboundary--- + WAV`
+- 用 Seeed Watcher 当“麦克风 + 播放器”
+- 把语音请求送进 OpenClaw
+- 再把 OpenClaw 的回复变回 Watcher 能直接播放的格式
 
-旧的本地 STT/Ollama/Python 链路已经移除。
+一句话：这是一个语音入口桥接器。  
+它让你的 OpenClaw（龙虾）先“听得见、说得出”。  
+至于“看得见”（摄像头视觉能力），可以在下一步继续加，因为 Watcher 本身有摄像头。
 
-## 拓扑
+## 你最终会看到什么效果
+
+打通之后，日常体验是：
+
+1. 你对着 Watcher 说话
+2. Watcher 把音频发给这个桥接服务
+3. 桥接服务转给 OpenClaw（watcher 通道）
+4. OpenClaw 生成回复文本 + 语音
+5. Watcher 播放声音，同时显示文字
+
+也就是一个完整闭环：`说话 -> 理解 -> 回答 -> 播放`。
+
+## 系统关系（很重要）
 
 ```text
-Watcher 设备
-  -> http://<bridge-ip>:8000/v2/watcher/talk/audio_stream
-桥接服务（本仓库）
-  -> http://<openclaw-host>:<gateway-port>/v2/watcher/talk/audio_stream
-OpenClaw（extensions/watcher 通道）
-  -> 返回文本 + 语音
-桥接服务
-  -> 转成设备可消费的二进制回包
+Watcher 硬件
+  -> watcher-OI（本项目，桥接层）
+  -> OpenClaw（extensions/watcher）
+  -> watcher-OI
+  -> Watcher 播放回复
 ```
 
-## OpenClaw 对接（本项目的真实上游）
+## 先准备硬件（Watcher）
 
-这个桥接项目就是给 OpenClaw 的 `extensions/watcher` 做前置协议转换：
+官方快速入门：
 
-- OpenClaw 接收同一路径：
-  - `/v2/watcher/talk/audio_stream`
-- OpenClaw watcher 返回 JSON 合约：
-  - `data.reply_text`
-  - `data.reply_wav_base64`
-- 本桥接把这份 JSON 再封装成设备需要的二进制格式。
+- https://wiki.seeedstudio.com/getting_started_with_watcher/
 
-### 配置映射
+你只需要确保三件事：
 
-1. 先配 OpenClaw 的 watcher 通道：
+1. Watcher 能联网
+2. Watcher 能访问桥接服务地址（例如 `http://192.168.1.20:8000`）
+3. 在 SenseCraft 里把私有 AI 服务地址指向这个桥接地址
+
+## 再准备软件（OpenClaw + 桥接）
+
+## A. OpenClaw 侧（上游）
+
+确保 OpenClaw 开了 watcher 通道，核心配置类似：
 
 ```yaml
 channels:
@@ -45,183 +59,60 @@ channels:
     bigmodelApiKey: <your-bigmodel-key>
 ```
 
-2. 再配本桥接项目（`.env`）：
+## B. watcher-OI 侧（本项目）
+
+```bash
+npm install
+cp .env.example .env
+```
+
+最小 `.env`（只改这两个就能跑起来）：
 
 ```dotenv
 WATCHER_TARGET=http://<openclaw-host>:<gateway-port>
 WATCHER_AUTH_TOKEN=<shared-token>
 ```
 
-说明：
-- `WATCHER_AUTH_TOKEN` 会以 `Authorization` 头传给 OpenClaw。
-- OpenClaw watcher 支持从 Bearer/query/header 读取 token。
-- 如果 OpenClaw 设 `dmPolicy=allowlist`，要把桥接传过去的 `sender` 加进 `channels.watcher.allowFrom`。
-
-## Watcher 官方硬件文档
-
-- Seeed Watcher 快速入门：
-  - https://wiki.seeedstudio.com/getting_started_with_watcher/
-
-## 运行流程（与 `main.js` 一致）
-
-### Step 0: 启动与环境加载
-
-- 服务启动时从 `WATCHER_ENV_FILE` 或 `.env` 读取配置。
-- 进程环境变量优先级高于文件内同名变量。
-- 监听端口固定 `8000`。
-
-### Step 1: 初始化默认参数
-
-- `WATCHER_TARGET` 默认：`http://172.22.1.82:18789`
-- `WATCHER_SENDER` 默认：`test-device`
-- `WATCHER_AUTH_TOKEN` 在代码里有默认回退值，生产环境建议强制覆盖
-- `WATCHER_INBOUND_AUTH_TOKEN` 为空即关闭入站鉴权
-- 超时默认 `60000` ms
-- 请求体上限默认 `20971520` bytes
-- 调试保存开关默认全开（`WATCHER_SAVE_REQ/RESP/AUDIO/UPSTREAM=1`）
-
-### Step 2: 中间件日志
-
-- 每个请求生成随机 `requestId`
-- 记录请求头摘要、来源信息、耗时和响应大小
-- 客户端提前断开会在 `res.close` 里记录
-
-### Step 3: 处理 `POST /v2/watcher/talk/audio_stream`
-
-1. 校验入站鉴权（如果配置了 token）
-- 不匹配返回 `401` JSON
-
-2. 读取原始请求体
-- 超过 `WATCHER_MAX_REQUEST_BYTES` 返回 `400 Bad Request`
-
-3. 构造上游 URL
-- 保留原始路径和 query
-- 如果没有 `sender`，自动补 `sender=<WATCHER_SENDER>`
-
-4. 转发到上游（axios）
-- 请求体按原始字节透传
-- 上游 `Authorization` 始终用 `WATCHER_AUTH_TOKEN`（自动标准化 Bearer）
-- 上游网络异常返回 `502 Bad Gateway`
-
-5. 解析上游返回
-- 场景 A：整体可解析为 JSON
-  - 若匹配 watcher JSON 合约：读 `data.reply_text`、`data.reply_wav_base64`、`data.stt_result`
-  - 否则按通用 JSON 文本兜底提取
-- 场景 B：boundary 二进制
-  - 拆成 `json + boundary + audio`
-
-6. 标准化文本与音频
-- 音频不是 WAV 时，按 PCM 包装为 WAV
-- 上游没音频时，生成 500ms 静音 WAV 兜底
-- 文本含中文时，`screen_text` 固定为：
-  - `Current text is not supported for display.`
-
-7. 组装最终回包
-- `Content-Type: application/octet-stream`
-- 响应体格式：
-  - JSON
-  - `---sensecraftboundary---`
-  - WAV 二进制
-
-### Step 4: 调试文件输出
-
-开启后会落盘到 `debug-responses/`：
-- `request_*.bin`
-- `upstream_*.bin`
-- `response_*.bin`
-- `audio_*.wav`
-
-## 硬件部署
-
-1. 让设备与桥接机器网络互通。
-- 同一局域网最省事。
-- 跨网段时确保路由与防火墙放通 `8000`。
-
-2. 给桥接机器稳定地址。
-- 使用固定内网 IP 或内网 DNS。
-- 避免 `localhost`/临时热点地址。
-
-3. 在设备侧配置 AI 服务地址。
-- 在 SenseCraft 或设备管理页设置：
-  - `http://<bridge-ip>:8000`
-- 请求路径保持 `/v2/watcher/talk/audio_stream`。
-
-## 软件使用
+然后启动：
 
 ```bash
-npm install
-cp .env.example .env
 npm run start
 ```
 
-最小 `.env`：
+默认监听端口是 `8000`。
 
-```dotenv
-WATCHER_TARGET=http://<openclaw-host>:<gateway-port>
-WATCHER_AUTH_TOKEN=<openclaw-watcher-webhookToken-or-bearer>
-```
+## 5 分钟打通检查
 
-## 打通验证
-
-1. 从桥接机验证上游可达：
-
-```bash
-curl -i http://<openclaw-host>:<gateway-port>/health
-```
-
-2. 验证桥接进程在跑（`/` 返回 `404` 属于当前代码正常行为）：
+1. 确认桥接服务已启动（访问 `/` 返回 404 也正常，说明进程活着）：
 
 ```bash
 curl -i http://127.0.0.1:8000/
 ```
 
-3. 主路由烟测：
+2. 确认桥接机能访问 OpenClaw：
 
 ```bash
-curl -sS \
-  -X POST "http://127.0.0.1:8000/v2/watcher/talk/audio_stream" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @sample.wav \
-  -o response.bin
+curl -i http://<openclaw-host>:<gateway-port>/health
 ```
 
-4. 把真实设备指向桥接地址，做语音联调。
+3. 让 Watcher 发起一次真实语音请求，观察桥接日志是否有请求和上游返回。
 
-## 打通后的效果
+## 为什么要加这一层桥接
 
-- 设备无需改协议即可持续发送音频
-- 桥接每轮都有请求/上游状态日志
-- 设备同时拿到 `screen_text` + 可播放语音
-- 用户感知路径：说话 -> 短等待 -> 文本和声音返回
+OpenClaw 的 watcher 通道返回的是清晰的 JSON（文本 + 音频 base64）。  
+Watcher 设备侧更适合消费二进制拼包（JSON + boundary + WAV）。  
+这个项目就是把两边“协议翻译”接起来，减少你在设备端和 OpenClaw 端的改动成本。
 
-## 环境变量
+## 现在有了什么，还差什么
 
-实践里建议至少配置：
-- `WATCHER_TARGET`
-- `WATCHER_AUTH_TOKEN`
+- 已有：耳朵（收音）+ 嘴巴（播报）
+- 下一步：眼睛（摄像头视觉链路）
 
-可选：
-- `WATCHER_INBOUND_AUTH_TOKEN`
-- `WATCHER_SENDER`
-- `WATCHER_UPSTREAM_TIMEOUT_MS`
-- `WATCHER_MAX_REQUEST_BYTES`
-- `WATCHER_STANDARD_TEXT`
-- `WATCHER_DEBUG_DIR`
-- `WATCHER_SAVE_REQ`
-- `WATCHER_SAVE_UPSTREAM`
-- `WATCHER_SAVE_RESP`
-- `WATCHER_SAVE_AUDIO`
-- `WATCHER_ENV_FILE`
+Watcher 已经有摄像头硬件基础，所以后续可以在这个入口之上继续扩展视觉能力。
 
-## 常见故障
+## 常见问题（简版）
 
-- 桥接返回 `401`：
-  - 入站 token 不匹配
-- 桥接返回 `400`：
-  - 请求体超限或读取中断
-- 桥接返回 `502`：
-  - 桥接访问不上游、上游超时或上游进程异常
-- 设备有字但没声音：
-  - 上游音频为空或格式不对，检查 `audio_*.wav`
-- 响应很慢：
-  - 网络 RTT 高或上游计算慢，结合请求 id 看链路耗时
+- `401`：通常是 token 不一致（桥接和 OpenClaw 的共享 token 没对齐）
+- `502`：通常是桥接访问不到 OpenClaw
+- 有文字没声音：检查 OpenClaw TTS 配置和桥接日志
+
