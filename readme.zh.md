@@ -1,102 +1,227 @@
 # OpenClaw Watcher Bridge
 
-`watcher-OI` 现在是一个单一职责的桥接服务：
+这个仓库现在只做一件事：
 
-- 接收设备请求：`POST /v2/watcher/talk/audio_stream`
-- 将原始音频透传到上游 Watcher API
-- 按设备协议回包：`JSON + boundary + WAV`
+- 接设备音频：`POST /v2/watcher/talk/audio_stream`
+- 把原始音频转发给上游 Watcher 服务
+- 回设备标准包：`JSON + ---sensecraftboundary--- + WAV`
 
-仓库已移除历史 STT/OI/Ollama/Python 本地链路。
+旧的本地 STT/Ollama/Python 链路已经移除。
 
-## 接口约定
+## 拓扑
 
-- 设备请求：`POST /v2/watcher/talk/audio_stream`
-- 请求体：原始音频字节流（设备侧调用方式不变）
-- 设备响应：`application/octet-stream`
-  - 第一段：JSON
-  - 第二段：WAV（二进制），使用 `---sensecraftboundary---` 分隔
-
-## 快速开始
-
-1. 安装依赖。
-
-```bash
-npm install
+```text
+Watcher 设备
+  -> http://<bridge-ip>:8000/v2/watcher/talk/audio_stream
+桥接服务（本仓库）
+  -> http://<openclaw-host>:<gateway-port>/v2/watcher/talk/audio_stream
+OpenClaw（extensions/watcher 通道）
+  -> 返回文本 + 语音
+桥接服务
+  -> 转成设备可消费的二进制回包
 ```
 
-2. 创建环境变量文件。
+## OpenClaw 对接（本项目的真实上游）
 
-```bash
-cp .env.example .env
+这个桥接项目就是给 OpenClaw 的 `extensions/watcher` 做前置协议转换：
+
+- OpenClaw 接收同一路径：
+  - `/v2/watcher/talk/audio_stream`
+- OpenClaw watcher 返回 JSON 合约：
+  - `data.reply_text`
+  - `data.reply_wav_base64`
+- 本桥接把这份 JSON 再封装成设备需要的二进制格式。
+
+### 配置映射
+
+1. 先配 OpenClaw 的 watcher 通道：
+
+```yaml
+channels:
+  watcher:
+    enabled: true
+    webhookPath: /v2/watcher/talk/audio_stream
+    webhookToken: <shared-token>
+    bigmodelApiKey: <your-bigmodel-key>
 ```
 
-3. 启动服务。
+2. 再配本桥接项目（`.env`）：
 
-```bash
-npm run start
+```dotenv
+WATCHER_TARGET=http://<openclaw-host>:<gateway-port>
+WATCHER_AUTH_TOKEN=<shared-token>
 ```
 
-默认监听端口为 `8000`。
+说明：
+- `WATCHER_AUTH_TOKEN` 会以 `Authorization` 头传给 OpenClaw。
+- OpenClaw watcher 支持从 Bearer/query/header 读取 token。
+- 如果 OpenClaw 设 `dmPolicy=allowlist`，要把桥接传过去的 `sender` 加进 `channels.watcher.allowFrom`。
 
-## 环境变量
+## Watcher 官方硬件文档
 
-桥接运行的核心配置：
+- Seeed Watcher 快速入门：
+  - https://wiki.seeedstudio.com/getting_started_with_watcher/
 
-- `WATCHER_TARGET`：上游服务地址，例如 `http://172.22.1.82:18789`
-- `WATCHER_AUTH_TOKEN`：桥接请求上游时使用的鉴权 token
+## 运行流程（与 `main.js` 一致）
 
-可选配置：
+### Step 0: 启动与环境加载
 
-- `WATCHER_INBOUND_AUTH_TOKEN`：设备请求桥接时的入站鉴权 token
-- `WATCHER_SENDER`：`sender` 缺省值（默认 `test-device`）
-- `WATCHER_UPSTREAM_TIMEOUT_MS`：上游超时毫秒（默认 `60000`）
-- `WATCHER_MAX_REQUEST_BYTES`：请求体大小上限（默认 `20971520`）
-- `WATCHER_DEBUG_DIR`：调试文件目录（默认 `debug-responses`）
-- `WATCHER_SAVE_REQ`：是否保存请求包（`1/0`）
-- `WATCHER_SAVE_UPSTREAM`：是否保存上游原始响应（`1/0`）
-- `WATCHER_SAVE_RESP`：是否保存最终回包（`1/0`）
-- `WATCHER_SAVE_AUDIO`：是否保存最终音频 wav（`1/0`）
-- `WATCHER_ENV_FILE`：指定非默认 `.env` 文件路径
+- 服务启动时从 `WATCHER_ENV_FILE` 或 `.env` 读取配置。
+- 进程环境变量优先级高于文件内同名变量。
+- 监听端口固定 `8000`。
 
-## 鉴权说明
+### Step 1: 初始化默认参数
 
-入站鉴权：
+- `WATCHER_TARGET` 默认：`http://172.22.1.82:18789`
+- `WATCHER_SENDER` 默认：`test-device`
+- `WATCHER_AUTH_TOKEN` 在代码里有默认回退值，生产环境建议强制覆盖
+- `WATCHER_INBOUND_AUTH_TOKEN` 为空即关闭入站鉴权
+- 超时默认 `60000` ms
+- 请求体上限默认 `20971520` bytes
+- 调试保存开关默认全开（`WATCHER_SAVE_REQ/RESP/AUDIO/UPSTREAM=1`）
 
-- `WATCHER_INBOUND_AUTH_TOKEN` 为空时，关闭入站鉴权。
-- 配置后，设备请求头 `Authorization` 必须匹配。
-- 不匹配直接返回 `401`。
+### Step 2: 中间件日志
 
-上游鉴权：
+- 每个请求生成随机 `requestId`
+- 记录请求头摘要、来源信息、耗时和响应大小
+- 客户端提前断开会在 `res.close` 里记录
 
-- 桥接调用上游时，始终使用 `WATCHER_AUTH_TOKEN` 作为 `Authorization`（支持纯 token 或 `Bearer ...`）。
+### Step 3: 处理 `POST /v2/watcher/talk/audio_stream`
 
-## 上游对接
+1. 校验入站鉴权（如果配置了 token）
+- 不匹配返回 `401` JSON
 
-当前桥接支持两种上游返回：
+2. 读取原始请求体
+- 超过 `WATCHER_MAX_REQUEST_BYTES` 返回 `400 Bad Request`
 
-- 新版 JSON 合约（`data.reply_text`、`data.reply_wav_base64`）
-- 旧版 boundary 二进制合约
+3. 构造上游 URL
+- 保留原始路径和 query
+- 如果没有 `sender`，自动补 `sender=<WATCHER_SENDER>`
 
-桥接会统一转换为设备需要的 `JSON + boundary + WAV`。
+4. 转发到上游（axios）
+- 请求体按原始字节透传
+- 上游 `Authorization` 始终用 `WATCHER_AUTH_TOKEN`（自动标准化 Bearer）
+- 上游网络异常返回 `502 Bad Gateway`
 
-## 调试文件
+5. 解析上游返回
+- 场景 A：整体可解析为 JSON
+  - 若匹配 watcher JSON 合约：读 `data.reply_text`、`data.reply_wav_base64`、`data.stt_result`
+  - 否则按通用 JSON 文本兜底提取
+- 场景 B：boundary 二进制
+  - 拆成 `json + boundary + audio`
 
-开启调试保存后，会在 `debug-responses/` 生成：
+6. 标准化文本与音频
+- 音频不是 WAV 时，按 PCM 包装为 WAV
+- 上游没音频时，生成 500ms 静音 WAV 兜底
+- 文本含中文时，`screen_text` 固定为：
+  - `Current text is not supported for display.`
 
+7. 组装最终回包
+- `Content-Type: application/octet-stream`
+- 响应体格式：
+  - JSON
+  - `---sensecraftboundary---`
+  - WAV 二进制
+
+### Step 4: 调试文件输出
+
+开启后会落盘到 `debug-responses/`：
 - `request_*.bin`
 - `upstream_*.bin`
 - `response_*.bin`
 - `audio_*.wav`
 
-这些调试产物已在 git 忽略列表中。
+## 硬件部署
 
-## 已移除 Legacy
+1. 让设备与桥接机器网络互通。
+- 同一局域网最省事。
+- 跨网段时确保路由与防火墙放通 `8000`。
 
-以下旧链路文件已明确移除：
+2. 给桥接机器稳定地址。
+- 使用固定内网 IP 或内网 DNS。
+- 避免 `localhost`/临时热点地址。
 
-- `common.js`
-- `common.py`
-- `proxy.py`
-- `requirements.txt`
+3. 在设备侧配置 AI 服务地址。
+- 在 SenseCraft 或设备管理页设置：
+  - `http://<bridge-ip>:8000`
+- 请求路径保持 `/v2/watcher/talk/audio_stream`。
 
-本仓库不再保留旧方案的兼容启动方式。
+## 软件使用
+
+```bash
+npm install
+cp .env.example .env
+npm run start
+```
+
+最小 `.env`：
+
+```dotenv
+WATCHER_TARGET=http://<openclaw-host>:<gateway-port>
+WATCHER_AUTH_TOKEN=<openclaw-watcher-webhookToken-or-bearer>
+```
+
+## 打通验证
+
+1. 从桥接机验证上游可达：
+
+```bash
+curl -i http://<openclaw-host>:<gateway-port>/health
+```
+
+2. 验证桥接进程在跑（`/` 返回 `404` 属于当前代码正常行为）：
+
+```bash
+curl -i http://127.0.0.1:8000/
+```
+
+3. 主路由烟测：
+
+```bash
+curl -sS \
+  -X POST "http://127.0.0.1:8000/v2/watcher/talk/audio_stream" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @sample.wav \
+  -o response.bin
+```
+
+4. 把真实设备指向桥接地址，做语音联调。
+
+## 打通后的效果
+
+- 设备无需改协议即可持续发送音频
+- 桥接每轮都有请求/上游状态日志
+- 设备同时拿到 `screen_text` + 可播放语音
+- 用户感知路径：说话 -> 短等待 -> 文本和声音返回
+
+## 环境变量
+
+实践里建议至少配置：
+- `WATCHER_TARGET`
+- `WATCHER_AUTH_TOKEN`
+
+可选：
+- `WATCHER_INBOUND_AUTH_TOKEN`
+- `WATCHER_SENDER`
+- `WATCHER_UPSTREAM_TIMEOUT_MS`
+- `WATCHER_MAX_REQUEST_BYTES`
+- `WATCHER_STANDARD_TEXT`
+- `WATCHER_DEBUG_DIR`
+- `WATCHER_SAVE_REQ`
+- `WATCHER_SAVE_UPSTREAM`
+- `WATCHER_SAVE_RESP`
+- `WATCHER_SAVE_AUDIO`
+- `WATCHER_ENV_FILE`
+
+## 常见故障
+
+- 桥接返回 `401`：
+  - 入站 token 不匹配
+- 桥接返回 `400`：
+  - 请求体超限或读取中断
+- 桥接返回 `502`：
+  - 桥接访问不上游、上游超时或上游进程异常
+- 设备有字但没声音：
+  - 上游音频为空或格式不对，检查 `audio_*.wav`
+- 响应很慢：
+  - 网络 RTT 高或上游计算慢，结合请求 id 看链路耗时
