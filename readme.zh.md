@@ -43,6 +43,13 @@
 
 ### A. OpenClaw 侧
 
+OpenClaw 对 Watcher 的支持目前仍处于开发阶段。
+这条链路已经和当前桥接服务完成端到端跑通验证，但暂时还没有作为正式可安装插件发布。
+
+当前请先使用这个可工作的 OpenClaw 分支：
+
+- https://github.com/luoluoter/openclaw/tree/chore/watcher-snapshot-20260306
+
 确保 watcher 通道启用：
 
 ```yaml

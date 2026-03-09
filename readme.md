@@ -44,6 +44,14 @@ Pitfalls:
 
 ### A. OpenClaw side
 
+Watcher support in OpenClaw is currently a development-stage integration.
+It has already been validated end to end with this bridge, but it is not yet
+published as an official installable plugin release.
+
+For now, use the working OpenClaw branch here:
+
+- https://github.com/luoluoter/openclaw/tree/chore/watcher-snapshot-20260306
+
 Enable watcher channel:
 
 ```yaml
