@@ -48,7 +48,8 @@ Watcher support in OpenClaw is currently a development-stage integration.
 It has already been validated end to end with this bridge, but it is not yet
 published as an official installable plugin release.
 
-For now, use the working OpenClaw branch here:
+This setup does not use stock OpenClaw. It relies on a modified OpenClaw
+branch with Watcher-related changes:
 
 - https://github.com/luoluoter/openclaw/tree/chore/watcher-snapshot-20260306
 
@@ -90,6 +91,10 @@ npm run start
 Pass criteria:
 
 - Startup log includes `Server running on port 8000`
+
+If Watcher can already reach this bridge host directly, you can stop here.
+`frpc` is only needed for public tunneling, port forwarding, or other relay
+network setups.
 
 Pitfall:
 

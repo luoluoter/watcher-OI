@@ -141,3 +141,6 @@ __pycache__
 # watcher runtime/debug outputs
 debug-responses/
 debug-audio-profiles/
+.runtime/
+frpc.toml
+.tools/

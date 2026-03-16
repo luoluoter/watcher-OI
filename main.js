@@ -44,7 +44,7 @@ function loadEnvFile(filePath) {
 loadEnvFile(process.env.WATCHER_ENV_FILE || '.env');
 
 const app = express();
-const port = 8000;
+const port = Number(process.env.WATCHER_PORT || process.env.PORT || 8000);
 
 const TARGET_BASE =
   process.env.WATCHER_TARGET || 'http://172.22.1.82:18789';

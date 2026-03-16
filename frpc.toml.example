@@ -1,0 +1,17 @@
+# Fill in the frps values below, then copy to ./frpc.toml.
+# The default proxy exposes the local watcher bridge on port 8000.
+
+serverAddr = "your-frps-host"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "replace-with-frp-token"
+
+transport.tls.enable = true
+
+[[proxies]]
+name = "watcher-bridge"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8000
+remotePort = 18000

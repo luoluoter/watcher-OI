@@ -46,7 +46,8 @@
 OpenClaw 对 Watcher 的支持目前仍处于开发阶段。
 这条链路已经和当前桥接服务完成端到端跑通验证，但暂时还没有作为正式可安装插件发布。
 
-当前请先使用这个可工作的 OpenClaw 分支：
+这里使用的不是原版 OpenClaw，而是做过 Watcher 相关修改的版本。
+修改代码请使用这个分支：
 
 - https://github.com/luoluoter/openclaw/tree/chore/watcher-snapshot-20260306
 
@@ -88,6 +89,55 @@ npm run start
 通过标准：
 
 - 启动日志出现 `Server running on port 8000`
+
+如果 Watcher 已经能直接访问这台 bridge 主机，到这里就够了。  
+下面的 `frpc` 仅用于需要公网穿透、端口转发或额外网络中转的场景。
+
+### C. 可选：一键启动 bridge + frpc（仅在需要公网穿透时）
+
+仓库里带了一个幂等脚本：
+
+```bash
+chmod +x scripts/bridge-stack.sh
+./scripts/bridge-stack.sh start
+```
+
+脚本行为：
+
+- 已运行的 `bridge` / `frpc` 会跳过，不会重复拉起
+- PID 文件失效时会自动清理
+- 首次发现 `frpc.toml` 不存在时，会从 `frpc.toml.example` 复制一份并退出，等你补完 `frps` 配置后再重跑
+- 本机没有 `frpc` 时，会自动从官方 release 下载到 `.tools/frp/`
+- 日志和 PID 都放在 `.runtime/`
+
+常用命令：
+
+```bash
+./scripts/bridge-stack.sh status
+./scripts/bridge-stack.sh logs 100
+./scripts/bridge-stack.sh restart
+./scripts/bridge-stack.sh stop
+```
+
+如需自定义路径：
+
+```bash
+FRPC_BIN=/path/to/frpc FRPC_CONFIG=/path/to/frpc.toml ./scripts/bridge-stack.sh start
+```
+
+固定版本安装：
+
+```bash
+FRP_VERSION=0.67.0 ./scripts/bridge-stack.sh start
+```
+
+如需改本地 bridge 监听端口：
+
+```bash
+BRIDGE_PORT=18080 ./scripts/bridge-stack.sh start
+```
+
+注意同时把 `frpc.toml` 里的 `localPort` 改成同一个端口。
 
 避坑：
 
